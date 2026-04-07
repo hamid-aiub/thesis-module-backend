@@ -8,6 +8,7 @@ import { BullModule } from "@nestjs/bull";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
 import { RedisCacheModule } from "./providers/cache/redis/redis-cache.module";
+import { SemesterModule } from "@/src/modules/semester/semester.module";
 @Module({
   imports: [
     ThrottlerModule.forRootAsync({
@@ -52,6 +53,7 @@ import { RedisCacheModule } from "./providers/cache/redis/redis-cache.module";
       load: [global_config],
     }),
     RedisCacheModule,
+    SemesterModule,
   ],
   controllers: [AppController],
   providers: [AppService, ThrottlerGuard],
