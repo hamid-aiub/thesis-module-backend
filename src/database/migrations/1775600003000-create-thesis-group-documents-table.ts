@@ -8,6 +8,7 @@ import {
 
 export class CreateThesisGroupDocumentsTable1775600003000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Create the table with the final single-row structure
     await queryRunner.createTable(
       new Table({
         name: "thesis_group_documents",
@@ -30,13 +31,42 @@ export class CreateThesisGroupDocumentsTable1775600003000 implements MigrationIn
             isNullable: false,
           },
           {
-            name: "document_type",
+            name: "literature_review",
             type: "varchar",
-            length: "60",
-            isNullable: false,
+            isNullable: true,
           },
           {
-            name: "file_path",
+            name: "project_proposal",
+            type: "varchar",
+            isNullable: true,
+          },
+          {
+            name: "progress_report",
+            type: "varchar",
+            isNullable: true,
+          },
+          {
+            name: "final_thesis_book",
+            type: "varchar",
+            isNullable: true,
+          },
+          {
+            name: "plagiarism_report",
+            type: "varchar",
+            isNullable: true,
+          },
+          {
+            name: "ai_detection_report",
+            type: "varchar",
+            isNullable: true,
+          },
+          {
+            name: "presentation_slide",
+            type: "varchar",
+            isNullable: true,
+          },
+          {
+            name: "poster",
             type: "varchar",
             isNullable: true,
           },
@@ -68,6 +98,7 @@ export class CreateThesisGroupDocumentsTable1775600003000 implements MigrationIn
       }),
     );
 
+    // Add foreign key for thesis_group_id
     await queryRunner.createForeignKey(
       "thesis_group_documents",
       new TableForeignKey({
@@ -78,6 +109,7 @@ export class CreateThesisGroupDocumentsTable1775600003000 implements MigrationIn
       }),
     );
 
+    // Add foreign key for semester_id
     await queryRunner.createForeignKey(
       "thesis_group_documents",
       new TableForeignKey({
@@ -88,6 +120,17 @@ export class CreateThesisGroupDocumentsTable1775600003000 implements MigrationIn
       }),
     );
 
+    // Add unique constraint on thesis_group_id (one row per thesis group)
+    await queryRunner.createIndex(
+      "thesis_group_documents",
+      new TableIndex({
+        name: "UQ_tgd_group",
+        columnNames: ["thesis_group_id"],
+        isUnique: true,
+      }),
+    );
+
+    // Add composite index for efficient querying
     await queryRunner.createIndex(
       "thesis_group_documents",
       new TableIndex({
@@ -99,6 +142,21 @@ export class CreateThesisGroupDocumentsTable1775600003000 implements MigrationIn
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     const table = await queryRunner.getTable("thesis_group_documents");
+
+    // Drop indexes
+    const uniqueIndex = table?.indices.find((i) => i.name === "UQ_tgd_group");
+    if (uniqueIndex) {
+      await queryRunner.dropIndex("thesis_group_documents", uniqueIndex);
+    }
+
+    const compositeIndex = table?.indices.find(
+      (i) => i.name === "IDX_tgd_group_semester",
+    );
+    if (compositeIndex) {
+      await queryRunner.dropIndex("thesis_group_documents", compositeIndex);
+    }
+
+    // Drop foreign keys
     const groupFk = table?.foreignKeys.find((fk) =>
       fk.columnNames.includes("thesis_group_id"),
     );
@@ -114,13 +172,7 @@ export class CreateThesisGroupDocumentsTable1775600003000 implements MigrationIn
       await queryRunner.dropForeignKey("thesis_group_documents", semesterFk);
     }
 
-    const index = table?.indices.find(
-      (i) => i.name === "IDX_tgd_group_semester",
-    );
-    if (index) {
-      await queryRunner.dropIndex("thesis_group_documents", index);
-    }
-
+    // Drop the table
     await queryRunner.dropTable("thesis_group_documents");
   }
 }

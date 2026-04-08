@@ -1,7 +1,14 @@
-import { MigrationInterface, QueryRunner, Table, TableCheck } from "typeorm";
+import {
+  MigrationInterface,
+  QueryRunner,
+  Table,
+  TableCheck,
+  TableForeignKey,
+} from "typeorm";
 
 export class CreateThesisGroupsTable1775600000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Create thesis_groups table with all columns from both migrations
     await queryRunner.createTable(
       new Table({
         name: "thesis_groups",
@@ -12,6 +19,11 @@ export class CreateThesisGroupsTable1775600000000 implements MigrationInterface 
             isPrimary: true,
             generationStrategy: "uuid",
             default: "uuid_generate_v4()",
+          },
+          {
+            name: "semester_id",
+            type: "uuid",
+            isNullable: true,
           },
           {
             name: "class_id",
@@ -82,16 +94,6 @@ export class CreateThesisGroupsTable1775600000000 implements MigrationInterface 
             isNullable: false,
           },
           {
-            name: "literature_review",
-            type: "varchar",
-            isNullable: true,
-          },
-          {
-            name: "project_proposal",
-            type: "varchar",
-            isNullable: true,
-          },
-          {
             name: "number_of_students",
             type: "int",
             isNullable: false,
@@ -115,6 +117,7 @@ export class CreateThesisGroupsTable1775600000000 implements MigrationInterface 
       }),
     );
 
+    // Add check constraint for student count
     await queryRunner.createCheckConstraint(
       "thesis_groups",
       new TableCheck({
@@ -122,18 +125,39 @@ export class CreateThesisGroupsTable1775600000000 implements MigrationInterface 
         expression: `"number_of_students" BETWEEN 2 AND 4`,
       }),
     );
+
+    // Add foreign key for semester_id
+    await queryRunner.createForeignKey(
+      "thesis_groups",
+      new TableForeignKey({
+        columnNames: ["semester_id"],
+        referencedTableName: "semesters",
+        referencedColumnNames: ["id"],
+        onDelete: "RESTRICT",
+      }),
+    );
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     const thesisGroupsTable = await queryRunner.getTable("thesis_groups");
+
+    // Drop foreign key
+    const semesterFk = thesisGroupsTable?.foreignKeys.find((fk) =>
+      fk.columnNames.includes("semester_id"),
+    );
+    if (semesterFk) {
+      await queryRunner.dropForeignKey("thesis_groups", semesterFk);
+    }
+
+    // Drop check constraint
     const studentCountCheck = thesisGroupsTable?.checks.find(
       (check) => check.name === "CHK_thesis_groups_student_count",
     );
-
     if (studentCountCheck) {
       await queryRunner.dropCheckConstraint("thesis_groups", studentCountCheck);
     }
 
+    // Drop table
     await queryRunner.dropTable("thesis_groups");
   }
 }

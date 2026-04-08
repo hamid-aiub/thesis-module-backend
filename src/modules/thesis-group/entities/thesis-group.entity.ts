@@ -86,13 +86,13 @@ export class ThesisGroup {
   @Column({ type: "text" })
   shortDescription!: string;
 
-  @ApiProperty({ example: "uploads/literature-review.pdf", nullable: true })
-  @Column({ type: "varchar", nullable: true })
-  literatureReview?: string;
+  // @ApiProperty({ example: "uploads/literature-review.pdf", nullable: true })
+  // @Column({ type: "varchar", nullable: true })
+  // literatureReview?: string;
 
-  @ApiProperty({ example: "uploads/project-proposal.pdf", nullable: true })
-  @Column({ type: "varchar", nullable: true })
-  projectProposal?: string;
+  // @ApiProperty({ example: "uploads/project-proposal.pdf", nullable: true })
+  // @Column({ type: "varchar", nullable: true })
+  // projectProposal?: string;
 
   @ApiProperty({ example: 2, minimum: 2, maximum: 4 })
   @Column({ type: "int" })

@@ -56,7 +56,8 @@ export class ThesisGroupService {
       }
 
       return await this.thesisGroupRepository.find(findOption);
-    } catch {
+    } catch (err) {
+      console.log("Error fetching thesis groups with options:", err);
       throw new BadRequestException();
     }
   }
