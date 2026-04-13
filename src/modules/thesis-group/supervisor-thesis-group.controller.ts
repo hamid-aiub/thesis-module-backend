@@ -18,7 +18,10 @@ import {
   ApiQuery,
   ApiTags,
 } from "@nestjs/swagger";
-import { FileFieldsInterceptor } from "@nestjs/platform-express";
+import {
+  FileFieldsInterceptor,
+  FilesInterceptor,
+} from "@nestjs/platform-express";
 import { diskStorage } from "multer";
 import { FindManyOptions } from "typeorm";
 import { QueryParserPipe } from "@/src/common/pipes";
@@ -72,10 +75,107 @@ const uploadStorage = diskStorage({
   },
 });
 
+const APPROVAL_REQUEST_TYPES = new Set([
+  "additional_groups",
+  "extension",
+  "other",
+]);
+
 @ApiTags("Supervisor")
 @Controller("supervisor")
 export class SupervisorThesisGroupController {
   constructor(private readonly thesisGroupService: ThesisGroupService) {}
+
+  @Get("dashboard")
+  @ApiOperation({
+    summary: "Get supervisor dashboard stats, semester summary and activities",
+  })
+  @ApiQuery({ name: "supervisorId", required: false, type: String })
+  @ApiQuery({ name: "semesterId", required: false, type: String })
+  async getSupervisorDashboard(
+    @Query("supervisorId") supervisorId?: string,
+    @Query("semesterId") semesterId?: string,
+  ) {
+    return this.thesisGroupService.getSupervisorDashboard({
+      supervisorId,
+      semesterId,
+    });
+  }
+
+  @Get("approval-requests")
+  @ApiOperation({ summary: "Get supervisor approval requests" })
+  @ApiQuery({ name: "supervisorId", required: false, type: String })
+  @ApiQuery({ name: "semesterId", required: false, type: String })
+  async getSupervisorApprovalRequests(
+    @Query("supervisorId") supervisorId?: string,
+    @Query("semesterId") semesterId?: string,
+  ) {
+    return this.thesisGroupService.getSupervisorApprovalRequests({
+      supervisorId,
+      semesterId,
+    });
+  }
+
+  @Post("approval-requests")
+  @UseInterceptors(
+    FilesInterceptor("attachments", 5, {
+      storage: uploadStorage,
+    }),
+  )
+  @ApiOperation({ summary: "Create a supervisor approval request" })
+  async createSupervisorApprovalRequest(
+    @Body() body: Record<string, unknown>,
+    @UploadedFiles() attachments: Express.Multer.File[] = [],
+  ) {
+    const supervisorId =
+      typeof body.supervisorId === "string" ? body.supervisorId.trim() : "";
+    const semesterId =
+      typeof body.semesterId === "string" && body.semesterId.trim()
+        ? body.semesterId
+        : undefined;
+    const type =
+      typeof body.type === "string" ? body.type.trim().toLowerCase() : "";
+    const message = typeof body.message === "string" ? body.message : "";
+    const reason = typeof body.reason === "string" ? body.reason : undefined;
+    const groupCount =
+      body.groupCount !== undefined && body.groupCount !== ""
+        ? Number(body.groupCount)
+        : undefined;
+
+    if (!supervisorId) {
+      throw new BadRequestException("supervisorId is required");
+    }
+
+    if (!message.trim()) {
+      throw new BadRequestException("message is required");
+    }
+
+    if (
+      groupCount !== undefined &&
+      (!Number.isInteger(groupCount) || groupCount < 0)
+    ) {
+      throw new BadRequestException("groupCount must be a valid number");
+    }
+
+    if (type && !APPROVAL_REQUEST_TYPES.has(type)) {
+      throw new BadRequestException("Unsupported request type");
+    }
+
+    return this.thesisGroupService.createSupervisorApprovalRequest({
+      supervisorId,
+      semesterId,
+      type: (type || "additional_groups") as
+        | "additional_groups"
+        | "extension"
+        | "other",
+      message,
+      reason,
+      groupCount,
+      attachments: attachments.map(
+        (file) => `/uploads/thesis-groups/${file.filename}`,
+      ),
+    });
+  }
 
   @Get("groups")
   @ApiOperation({ summary: "Get supervisor thesis groups" })

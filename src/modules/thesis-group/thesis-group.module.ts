@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { SupervisorThesisGroupController } from "./supervisor-thesis-group.controller";
+import { SupervisorApprovalRequest } from "./entities/supervisor-approval-request.entity";
 import { ThesisGroupController } from "./thesis-group.controller";
 import { ThesisGroupDocument } from "./entities/thesis-group-document.entity";
 import { ThesisGroupStudent } from "./entities/thesis-group-student.entity";
@@ -13,6 +14,7 @@ import { ThesisGroupService } from "./thesis-group.service";
       ThesisGroup,
       ThesisGroupStudent,
       ThesisGroupDocument,
+      SupervisorApprovalRequest,
     ]),
   ],
   controllers: [ThesisGroupController, SupervisorThesisGroupController],

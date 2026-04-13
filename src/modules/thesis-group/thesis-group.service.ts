@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { FindManyOptions, Repository } from "typeorm";
+import { FindManyOptions, FindOptionsWhere, Repository } from "typeorm";
 import {
   CreateThesisGroupDto,
   CreateThesisGroupInput,
@@ -14,6 +14,7 @@ import {
   UpdateThesisGroupInput,
 } from "./dtos/update-thesis-group.dto";
 import { ThesisGroupDocument } from "./entities/thesis-group-document.entity";
+import { SupervisorApprovalRequest } from "./entities/supervisor-approval-request.entity";
 import { ThesisGroupStudent } from "./entities/thesis-group-student.entity";
 import { ThesisGroup } from "./entities/thesis-group.entity";
 
@@ -30,6 +31,43 @@ interface GroupDocumentUpdateInput {
   aiDetectionPercentage?: number;
 }
 
+export interface SupervisorDashboardFilters {
+  supervisorId?: string;
+  semesterId?: string;
+}
+
+export interface SupervisorRecentActivity {
+  id: string;
+  type:
+    | "group_created"
+    | "group_updated"
+    | "evidence_uploaded"
+    | "approval_request";
+  title: string;
+  description: string;
+  timestamp: Date;
+  groupNo?: string;
+  status: "success" | "warning" | "info";
+}
+
+export interface SupervisorDashboardResponse {
+  stats: {
+    totalGroups: number;
+    totalStudents: number;
+    completedGroups: number;
+    pendingRequests: number;
+  };
+  groupsBySemester: Array<{
+    semesterId: string;
+    semesterName: string;
+    count: number;
+    students: number;
+    completed: number;
+    ongoing: number;
+  }>;
+  recentActivities: SupervisorRecentActivity[];
+}
+
 @Injectable()
 export class ThesisGroupService {
   constructor(
@@ -39,7 +77,208 @@ export class ThesisGroupService {
     private readonly studentRepository: Repository<ThesisGroupStudent>,
     @InjectRepository(ThesisGroupDocument)
     private readonly documentRepository: Repository<ThesisGroupDocument>,
+    @InjectRepository(SupervisorApprovalRequest)
+    private readonly approvalRequestRepository: Repository<SupervisorApprovalRequest>,
   ) {}
+
+  async getSupervisorDashboard(
+    filters: SupervisorDashboardFilters,
+  ): Promise<SupervisorDashboardResponse> {
+    const where: FindOptionsWhere<ThesisGroup> = {};
+
+    if (filters.supervisorId) {
+      where.supervisorId = filters.supervisorId;
+    }
+
+    if (filters.semesterId) {
+      where.semesterId = filters.semesterId;
+    }
+
+    const groups = await this.findAll({ where });
+    const approvalRequests = await this.getSupervisorApprovalRequests(filters);
+
+    const groupsBySemesterMap = new Map<
+      string,
+      {
+        semesterId: string;
+        semesterName: string;
+        count: number;
+        students: number;
+        completed: number;
+        ongoing: number;
+      }
+    >();
+
+    const recentActivities: SupervisorRecentActivity[] = [];
+
+    for (const group of groups) {
+      const semesterId = group.semesterId;
+      const semesterName = group.semester?.semesterName ?? "Unknown Semester";
+      const isCompleted = group.documents?.some((document) =>
+        Boolean(document.finalThesisBook),
+      );
+
+      const current = groupsBySemesterMap.get(semesterId) ?? {
+        semesterId,
+        semesterName,
+        count: 0,
+        students: 0,
+        completed: 0,
+        ongoing: 0,
+      };
+
+      current.count += 1;
+      current.students += group.numberOfStudents;
+      current.completed += isCompleted ? 1 : 0;
+      current.ongoing += isCompleted ? 0 : 1;
+
+      groupsBySemesterMap.set(semesterId, current);
+
+      if (group.createdAt) {
+        recentActivities.push({
+          id: `group-created-${group.id}`,
+          type: "group_created",
+          title: "Group Created",
+          description: `${group.proposedTitle} was created`,
+          timestamp: group.createdAt,
+          groupNo: group.supervisorGroup ?? undefined,
+          status: "success",
+        });
+      }
+
+      if (
+        group.updatedAt &&
+        group.createdAt &&
+        group.updatedAt.getTime() > group.createdAt.getTime()
+      ) {
+        recentActivities.push({
+          id: `group-updated-${group.id}`,
+          type: "group_updated",
+          title: "Group Updated",
+          description: `${group.proposedTitle} details were updated`,
+          timestamp: group.updatedAt,
+          groupNo: group.supervisorGroup ?? undefined,
+          status: "info",
+        });
+      }
+
+      for (const document of group.documents ?? []) {
+        if (!document.updatedAt) {
+          continue;
+        }
+
+        const hasEvidence =
+          Boolean(document.progressReport) ||
+          Boolean(document.finalThesisBook) ||
+          Boolean(document.plagiarismReport) ||
+          Boolean(document.aiDetectionReport) ||
+          Boolean(document.presentationSlide) ||
+          Boolean(document.poster);
+
+        if (hasEvidence) {
+          recentActivities.push({
+            id: `evidence-${document.id}`,
+            type: "evidence_uploaded",
+            title: "Evidence Uploaded",
+            description: `${group.proposedTitle} submitted evidence files`,
+            timestamp: document.updatedAt,
+            groupNo: group.supervisorGroup ?? undefined,
+            status: "success",
+          });
+        }
+      }
+    }
+
+    for (const request of approvalRequests) {
+      recentActivities.push({
+        id: `approval-${request.id}`,
+        type: "approval_request",
+        title:
+          request.status === "approved"
+            ? "Request Approved"
+            : request.status === "rejected"
+              ? "Request Rejected"
+              : "Approval Request Submitted",
+        description: request.message,
+        timestamp: request.requestDate,
+        status: request.status === "rejected" ? "warning" : "info",
+      });
+    }
+
+    recentActivities.sort(
+      (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
+    );
+
+    const totalStudents = groups.reduce(
+      (acc, group) => acc + group.numberOfStudents,
+      0,
+    );
+    const completedGroups = groups.filter((group) =>
+      group.documents?.some((document) => Boolean(document.finalThesisBook)),
+    ).length;
+
+    return {
+      stats: {
+        totalGroups: groups.length,
+        totalStudents,
+        completedGroups,
+        pendingRequests: approvalRequests.filter(
+          (request) => request.status === "pending",
+        ).length,
+      },
+      groupsBySemester: Array.from(groupsBySemesterMap.values()),
+      recentActivities: recentActivities.slice(0, 8),
+    };
+  }
+
+  async getSupervisorApprovalRequests(filters: SupervisorDashboardFilters) {
+    const where: FindOptionsWhere<SupervisorApprovalRequest> = {};
+
+    if (filters.supervisorId) {
+      where.supervisorId = filters.supervisorId;
+    }
+
+    if (filters.semesterId) {
+      where.semesterId = filters.semesterId;
+    }
+
+    return this.approvalRequestRepository.find({
+      where,
+      order: { requestDate: "DESC" },
+    });
+  }
+
+  async createSupervisorApprovalRequest(payload: {
+    supervisorId: string;
+    semesterId?: string;
+    type?: "additional_groups" | "extension" | "other";
+    message: string;
+    groupCount?: number;
+    reason?: string;
+    attachments?: string[];
+  }) {
+    if (!payload.supervisorId?.trim()) {
+      throw new BadRequestException("supervisorId is required");
+    }
+
+    if (!payload.message?.trim()) {
+      throw new BadRequestException("message is required");
+    }
+
+    const request = this.approvalRequestRepository.create({
+      supervisorId: payload.supervisorId,
+      semesterId: payload.semesterId ?? null,
+      type: payload.type ?? "additional_groups",
+      status: "pending",
+      requestDate: new Date(),
+      message: payload.message.trim(),
+      groupCount: payload.groupCount ?? null,
+      reason: payload.reason?.trim() || null,
+      attachments: payload.attachments ?? [],
+    });
+
+    return this.approvalRequestRepository.save(request);
+  }
 
   async findAll(
     findOption: FindManyOptions<ThesisGroup> = {},
