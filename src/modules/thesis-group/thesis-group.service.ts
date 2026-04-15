@@ -4,7 +4,13 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { FindManyOptions, FindOptionsWhere, Repository } from "typeorm";
+import {
+  FindManyOptions,
+  FindOptionsWhere,
+  IsNull,
+  Not,
+  Repository,
+} from "typeorm";
 import {
   CreateThesisGroupDto,
   CreateThesisGroupInput,
@@ -33,6 +39,11 @@ interface GroupDocumentUpdateInput {
 
 export interface SupervisorDashboardFilters {
   supervisorId?: string;
+  semesterId?: string;
+}
+
+export interface AdminApprovalRequestFilters {
+  status?: "pending" | "approved" | "rejected";
   semesterId?: string;
 }
 
@@ -265,19 +276,80 @@ export class ThesisGroupService {
       throw new BadRequestException("message is required");
     }
 
+    const requestType = payload.type ?? "additional_groups";
+    let resolvedGroupCount = payload.groupCount ?? null;
+
+    if (requestType === "additional_groups") {
+      const where: FindOptionsWhere<SupervisorApprovalRequest> = {
+        supervisorId: payload.supervisorId,
+        type: "additional_groups",
+        status: Not("rejected"),
+        semesterId: payload.semesterId ? payload.semesterId : IsNull(),
+      };
+
+      const latestRequest = await this.approvalRequestRepository.findOne({
+        where,
+        order: { groupCount: "DESC", requestDate: "DESC" },
+      });
+
+      const maxRequestedGroupCount = latestRequest?.groupCount ?? null;
+      if (
+        maxRequestedGroupCount !== null &&
+        (resolvedGroupCount === null ||
+          resolvedGroupCount <= maxRequestedGroupCount)
+      ) {
+        resolvedGroupCount = maxRequestedGroupCount + 1;
+      }
+    }
+
     const request = this.approvalRequestRepository.create({
       supervisorId: payload.supervisorId,
       semesterId: payload.semesterId ?? null,
-      type: payload.type ?? "additional_groups",
+      type: requestType,
       status: "pending",
       requestDate: new Date(),
       message: payload.message.trim(),
-      groupCount: payload.groupCount ?? null,
+      groupCount: resolvedGroupCount,
       reason: payload.reason?.trim() || null,
       attachments: payload.attachments ?? [],
     });
 
     return this.approvalRequestRepository.save(request);
+  }
+
+  async getAdminApprovalRequests(filters: AdminApprovalRequestFilters = {}) {
+    const where: FindOptionsWhere<SupervisorApprovalRequest> = {};
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
+    if (filters.semesterId) {
+      where.semesterId = filters.semesterId;
+    }
+
+    return this.approvalRequestRepository.find({
+      where,
+      order: { requestDate: "DESC" },
+    });
+  }
+
+  async respondToApprovalRequest(
+    id: string,
+    payload: { status: "approved" | "rejected" },
+  ) {
+    const existing = await this.approvalRequestRepository.findOne({
+      where: { id },
+    });
+
+    if (!existing) {
+      throw new NotFoundException("Approval request not found");
+    }
+
+    existing.status = payload.status;
+    existing.responseDate = new Date();
+
+    return this.approvalRequestRepository.save(existing);
   }
 
   async findAll(
@@ -636,5 +708,70 @@ export class ThesisGroupService {
     });
 
     return this.documentRepository.save(entity);
+  }
+
+  async findAllWithOBEMarks(
+    findOption: FindManyOptions<ThesisGroup> = {},
+  ): Promise<ThesisGroup[]> {
+    try {
+      findOption.relations = {
+        students: true,
+        semester: true,
+        documents: true,
+      };
+
+      if (!findOption.order) {
+        findOption.order = { createdAt: "DESC" };
+      }
+
+      const groups = await this.thesisGroupRepository.find(findOption);
+
+      // Load OBE marks for each student in each group
+      const groupsWithOBE = await Promise.all(
+        groups.map(async (group) => {
+          const obeMarks = await this.getOBEMarksByGroup(group.id);
+          return {
+            ...group,
+            obeMarks,
+          };
+        }),
+      );
+
+      return groupsWithOBE as any;
+    } catch (err) {
+      console.log("Error fetching thesis groups with OBE marks:", err);
+      throw new BadRequestException();
+    }
+  }
+
+  async findOneWithOBEMarks(id: string): Promise<any> {
+    try {
+      const thesisGroup = await this.thesisGroupRepository.findOne({
+        where: { id },
+        relations: { students: true, semester: true, documents: true },
+      });
+
+      if (!thesisGroup) {
+        throw new NotFoundException("Thesis group not found");
+      }
+
+      const obeMarks = await this.getOBEMarksByGroup(id);
+
+      return {
+        ...thesisGroup,
+        obeMarks,
+      };
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      throw new BadRequestException();
+    }
+  }
+
+  private async getOBEMarksByGroup(
+    groupId: string,
+  ): Promise<Record<string, any>> {
+    const marks: Record<string, any> = {};
+    // This will be populated when OBE marks are added via API
+    return marks;
   }
 }
